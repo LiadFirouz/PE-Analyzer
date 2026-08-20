@@ -2,6 +2,10 @@
 #include <unistd.h>
 #include <errno.h>
 
+// Forward Declarations for internal use
+static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath);
+static pe_status_t parsingLayout(pe_analyzer *ctx);
+
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
 {
@@ -40,7 +44,7 @@ static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath)
     // Call fstat passing the file descriptor and structure address
     if (fstat(fd, &fileSize) == -1)
     {
-        perror("Error retrieving file status");
+        perror("Error retrieving file status\n");
         close(fd);
         return PE_ERROR_STAT;
     }
@@ -80,6 +84,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
     // Validate the DOS signature (typically 'MZ')
     if (ctx->dosHeader->e_magic != IMAGE_DOS_SIGNATURE)
     {
+        printf("e_magic %04X, ctx->fileData[0] %c, ctx->fileData[1] %c\n", ctx->dosHeader->e_magic, ctx->fileData[0], ctx->fileData[1]);
         freeResources(ctx);
         return PE_ERROR_INVALID_DOS_SIGNATURE;
     }
@@ -99,7 +104,21 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
         freeResources(ctx);
         return PE_ERROR_INVALID_PE_SIGNATURE;
     }
+
+    ctx->fileHeader = (const image_file_header *)(ctx->ntHeader + 4);
+    printf("Machine: %04X\n", ctx->fileHeader->machine);
+
+    ctx->optHeader = (const uint8_t *)(ctx->fileHeader + 1);
+
+    if(ctx->fileSize +ctx->fileData < ctx->fileHeader->sizeOfOptionalHeader + ctx->optHeader){
+        printf("There was an overflow in the header\n");
+        freeResources(ctx);
+        return PE_ERROR_INVALID_HEADER_OFFSET;
+    }
     
+    uint16_t magic = *((uint16_t *)(ctx->optHeader));
+    printf("%04X\n", magic);
+
     return PE_SUCCESS;
 }
 
