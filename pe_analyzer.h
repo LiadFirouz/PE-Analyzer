@@ -15,6 +15,7 @@
 #define IMAGE_NT_SIGNATURE 0x00004550
 #define PE32 0x010B
 #define PE32_PLUS 0x020B
+#define IMAGE_SIZEOF_SHORT_NAME 8
 
 // 1. Define the enum first, so the functions below can use it
 typedef enum {
@@ -26,7 +27,8 @@ typedef enum {
     PE_ERROR_INVALID_DOS_SIGNATURE, 
     PE_ERROR_INVALID_NT_OFFSET, 
     PE_ERROR_INVALID_PE_SIGNATURE,
-    PE_ERROR_INVALID_HEADER_OFFSET
+    PE_ERROR_INVALID_HEADER_OFFSET,
+    PE_ERROR_INVALID_SECTION_HEADER
 } pe_status_t;
 
 // 2. Definition of the PE structures
@@ -46,12 +48,59 @@ typedef struct image_file_header {
     uint16_t characteristics;
 } __attribute__((packed)) image_file_header;
 
+typedef struct image_optional_header_64 {
+    uint16_t magic;
+    uint8_t majorLinkerVersion;
+    uint8_t minorLinkerVersion;
+    uint32_t sizeOfCode;
+    uint32_t sizeOfInitializedData;
+    uint32_t sizeOfUninitializedData;
+    uint32_t addressOfEntryPoint;
+    uint32_t baseOfCode;
+    uint64_t imageBase;
+    uint32_t sectionAlignment;
+    uint32_t fileAlignment;
+    uint16_t majorOperatingSystemVersion;
+    uint16_t minorOperatingSystemVersion;
+    uint16_t majorImageVersion;
+    uint16_t minorImageVersion;
+    uint16_t majorSubsystemVersion;
+    uint16_t minorSubsystemVersion;
+    uint32_t win32VersionValue;
+    uint32_t sizeOfImage;
+    uint32_t sizeOfHeaders;
+    uint32_t checkSum;
+    uint16_t subsystem;
+    uint16_t dllCharacteristics;
+    uint64_t sizeOfStackReserve;
+    uint64_t sizeOfStackCommit;
+    uint64_t sizeOfHeapReserve;
+    uint64_t sizeOfHeapCommit;
+    uint32_t loaderFlags;
+    uint32_t numberOfRvaAndSizes;
+} __attribute__((packed)) image_optional_header_64;
+
+typedef struct image_section_header {
+    uint8_t name[IMAGE_SIZEOF_SHORT_NAME];
+    uint32_t virtualSize;
+    uint32_t virtualAddress;
+    uint32_t sizeOfRawData;
+    uint32_t pointerToRawData;
+    uint32_t pointerToRelocations;
+    uint32_t pointerToLinenumbers;
+    uint16_t numberOfRelocations;
+    uint16_t numberOfLinenumbers;
+    uint32_t characteristics;
+} __attribute__((packed)) image_section_header;
+
 // 3. Definition of the Analyzer itself (which now recognizes the headers defined above)
 typedef struct pe_analyzer {
     const uint8_t *fileData;
     const image_dos_header *dosHeader;
     const uint8_t *ntHeader;
     const image_file_header *fileHeader;
+    const image_optional_header_64 *optHeader64;
+    const image_section_header *sectionHeaders;
     size_t fileSize;
     int fd;
     const uint8_t *optHeader;
