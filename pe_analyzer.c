@@ -6,6 +6,7 @@
 static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath);
 static pe_status_t parsingLayout(pe_analyzer *ctx);
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
+static pe_status_t parseImportDirectory(const pe_analyzer *ctx);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -133,6 +134,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
         return PE_ERROR_INVALID_SECTION_HEADER;
     }
 
+    parseImportDirectory(ctx);
     return PE_SUCCESS;
 }
 
@@ -166,6 +168,37 @@ uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx)
 
     // RVA does not belong to any mapped section
     return 0;
+}
+
+static pe_status_t parseImportDirectory(const pe_analyzer *ctx){
+    if(ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress == 0 || ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].size == 0)
+        return PE_SUCCESS;
+
+    uint32_t rawOffset = RvaToOffset(ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress, ctx);
+    if(rawOffset == 0)
+        return PE_ERROR_INVALID_IMPORT_TABLE;
+    
+    const image_import_descriptor *importDesc = (const image_import_descriptor *)(ctx->fileData + rawOffset);
+
+   while(1){
+        if((const uint8_t *)(importDesc + 1) > ctx->fileData + ctx->fileSize)
+            return PE_ERROR_INVALID_IMPORT_TABLE;
+        if(importDesc->name == 0 && importDesc->firstThunk == 0)
+            break;
+
+        uint32_t dllName = RvaToOffset(importDesc->name, ctx); 
+        if(dllName == 0)
+        return PE_ERROR_INVALID_IMPORT_TABLE;
+
+        const char *dllNameStr = (const char *)(ctx->fileData + dllName);
+        int maxLen = ctx->fileSize - dllName;
+        if(memchr(dllNameStr, '\0', maxLen) == NULL) 
+            return PE_ERROR_INVALID_IMPORT_TABLE;
+
+        printf("%s\n", dllNameStr);
+        importDesc++;
+    }
+    return PE_SUCCESS;
 }
 
 // Cleans up allocated resources, unmaps memory, and closes file descriptors

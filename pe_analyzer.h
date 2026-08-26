@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <string.h>
 
 #define DOS_HEADER_PADDING 58
 #define IMAGE_DOS_SIGNATURE 0x5A4D
@@ -16,6 +17,18 @@
 #define PE32 0x010B
 #define PE32_PLUS 0x020B
 #define IMAGE_SIZEOF_SHORT_NAME 8
+#define IMAGE_ORDINAL_FLAG64 0x8000000000000000ULL
+
+#define IMAGE_DIRECTORY_ENTRY_EXPORT    0
+#define IMAGE_DIRECTORY_ENTRY_IMPORT    1
+#define IMAGE_DIRECTORY_ENTRY_RESOURCE  2
+#define IMAGE_DIRECTORY_ENTRY_EXCEPTION 3
+#define IMAGE_DIRECTORY_ENTRY_SECURITY  4
+#define IMAGE_DIRECTORY_ENTRY_BASERELOC 5
+#define IMAGE_DIRECTORY_ENTRY_DEBUG     6
+#define IMAGE_DIRECTORY_ENTRY_TLS       7
+#define IMAGE_DIRECTORY_ENTRY_IAT       12
+#define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
 
 // 1. Define the enum first, so the functions below can use it
 typedef enum {
@@ -28,7 +41,8 @@ typedef enum {
     PE_ERROR_INVALID_NT_OFFSET, 
     PE_ERROR_INVALID_PE_SIGNATURE,
     PE_ERROR_INVALID_HEADER_OFFSET,
-    PE_ERROR_INVALID_SECTION_HEADER
+    PE_ERROR_INVALID_SECTION_HEADER,
+    PE_ERROR_INVALID_IMPORT_TABLE
 } pe_status_t;
 
 // 2. Definition of the PE structures
@@ -47,6 +61,26 @@ typedef struct image_file_header {
     uint16_t sizeOfOptionalHeader;
     uint16_t characteristics;
 } __attribute__((packed)) image_file_header;
+
+
+typedef struct image_data_directory {
+    uint32_t virtualAddress;
+    uint32_t size;
+
+}  __attribute__((packed)) image_data_directory;
+
+typedef struct image_import_descriptor {
+    uint32_t originalFirstThunk;
+    uint32_t timeDateStamp;
+    uint32_t forwarderChain;
+    uint32_t name;
+    uint32_t firstThunk;
+}  __attribute__((packed)) image_import_descriptor;
+
+typedef struct image_import_by_name {
+    uint16_t hint;
+    uint8_t name[1];
+}  __attribute__((packed)) image_import_by_name;
 
 typedef struct image_optional_header_64 {
     uint16_t magic;
@@ -78,6 +112,7 @@ typedef struct image_optional_header_64 {
     uint64_t sizeOfHeapCommit;
     uint32_t loaderFlags;
     uint32_t numberOfRvaAndSizes;
+    image_data_directory dataDirectory[16];
 } __attribute__((packed)) image_optional_header_64;
 
 typedef struct image_section_header {
@@ -93,6 +128,7 @@ typedef struct image_section_header {
     uint32_t characteristics;
 } __attribute__((packed)) image_section_header;
 
+
 // 3. Definition of the Analyzer itself (which now recognizes the headers defined above)
 typedef struct pe_analyzer {
     const uint8_t *fileData;
@@ -105,6 +141,8 @@ typedef struct pe_analyzer {
     int fd;
     const uint8_t *optHeader;
 } pe_analyzer;
+
+
 
 // 4. Finally - Declaration of public functions only!
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath);
