@@ -7,6 +7,7 @@ static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath);
 static pe_status_t parsingLayout(pe_analyzer *ctx);
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
 static pe_status_t parseImportDirectory(const pe_analyzer *ctx);
+static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -170,6 +171,47 @@ uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx)
     return 0;
 }
 
+static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc){
+    uint32_t thunkRva = 0;
+    if(importDesc->originalFirstThunk != 0)
+        thunkRva = importDesc->originalFirstThunk;
+    else if(importDesc->firstThunk != 0)
+        thunkRva = importDesc->firstThunk;
+    else
+        return PE_SUCCESS;
+    
+    const uint32_t offset = RvaToOffset(thunkRva, ctx);
+    if(offset == 0)
+        return PE_ERROR_PARSE_IMPORT_THUNKS;
+
+    const uint64_t *thunk = (const uint64_t *)(ctx->fileData + offset);
+    uint32_t nameOffset;
+    while(1){
+        if((const uint8_t *)(thunk + 1) > ctx->fileData + ctx->fileSize)
+            return PE_ERROR_PARSE_IMPORT_THUNKS;
+
+        if(*thunk == 0)
+            break;
+  
+        if (*thunk & IMAGE_ORDINAL_FLAG64)
+           printf("    [Ordinal] %u\n", (uint32_t)(*thunk & 0xFFFF));
+        else{
+            nameOffset = RvaToOffset((uint32_t)(*thunk), ctx);
+        if(nameOffset == 0)
+            return PE_ERROR_PARSE_IMPORT_THUNKS;
+        if(nameOffset + sizeof(uint16_t) + 1 > ctx->fileSize)
+            return PE_ERROR_PARSE_IMPORT_THUNKS;
+        const uint16_t * hint = (const uint16_t *) (ctx->fileData + nameOffset);
+        const char * funcNamePtr = (const char *) (hint + 1);
+        if(memchr(funcNamePtr, '\0', ctx->fileSize - (nameOffset + 2)) == NULL)
+            return PE_ERROR_PARSE_IMPORT_THUNKS;
+        printf("    [FuncName] %s (Hint: %u)\n", funcNamePtr, *hint);
+    }
+            thunk++;
+    }
+    return PE_SUCCESS;
+}
+
 static pe_status_t parseImportDirectory(const pe_analyzer *ctx){
     if(ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress == 0 || ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].size == 0)
         return PE_SUCCESS;
@@ -196,6 +238,7 @@ static pe_status_t parseImportDirectory(const pe_analyzer *ctx){
             return PE_ERROR_INVALID_IMPORT_TABLE;
 
         printf("%s\n", dllNameStr);
+        parseImportThunks(ctx, importDesc);
         importDesc++;
     }
     return PE_SUCCESS;
