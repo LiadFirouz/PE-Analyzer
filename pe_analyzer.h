@@ -43,7 +43,8 @@ typedef enum {
     PE_ERROR_INVALID_HEADER_OFFSET,
     PE_ERROR_INVALID_SECTION_HEADER,
     PE_ERROR_INVALID_IMPORT_TABLE,
-    PE_ERROR_PARSE_IMPORT_THUNKS
+    PE_ERROR_PARSE_IMPORT_THUNKS,
+    PE_ERROR_PARSE_EXPORT_DIRECTORY
 } pe_status_t;
 
 // 2. Definition of the PE structures
@@ -129,6 +130,20 @@ typedef struct image_section_header {
     uint32_t characteristics;
 } __attribute__((packed)) image_section_header;
 
+
+typedef struct image_export_directory {
+    uint32_t characteristics;        
+    uint32_t timeDateStamp;         
+    uint16_t majorVersion;
+    uint16_t minorVersion;
+    uint32_t name;                   
+    uint32_t base;                  
+    uint32_t numberOfFunctions;      
+    uint32_t numberOfNames;          
+    uint32_t addressOfFunctions;     
+    uint32_t addressOfNames;         
+    uint32_t addressOfNameOrdinals;  
+} __attribute__((packed)) image_export_directory;
 
 // 3. Definition of the Analyzer itself (which now recognizes the headers defined above)
 typedef struct pe_analyzer {

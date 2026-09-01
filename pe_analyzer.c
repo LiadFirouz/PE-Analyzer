@@ -8,6 +8,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx);
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
 static pe_status_t parseImportDirectory(const pe_analyzer *ctx);
 static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc);
+pe_status_t parseExportDirectory(const pe_analyzer *ctx);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -136,6 +137,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
     }
 
     parseImportDirectory(ctx);
+    parseExportDirectory(ctx);
     return PE_SUCCESS;
 }
 
@@ -171,76 +173,188 @@ uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx)
     return 0;
 }
 
-static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc){
+static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc)
+{
     uint32_t thunkRva = 0;
-    if(importDesc->originalFirstThunk != 0)
+    if (importDesc->originalFirstThunk != 0)
         thunkRva = importDesc->originalFirstThunk;
-    else if(importDesc->firstThunk != 0)
+    else if (importDesc->firstThunk != 0)
         thunkRva = importDesc->firstThunk;
     else
         return PE_SUCCESS;
-    
+
     const uint32_t offset = RvaToOffset(thunkRva, ctx);
-    if(offset == 0)
+    if (offset == 0)
         return PE_ERROR_PARSE_IMPORT_THUNKS;
 
     const uint64_t *thunk = (const uint64_t *)(ctx->fileData + offset);
     uint32_t nameOffset;
-    while(1){
-        if((const uint8_t *)(thunk + 1) > ctx->fileData + ctx->fileSize)
+    while (1)
+    {
+        if ((const uint8_t *)(thunk + 1) > ctx->fileData + ctx->fileSize)
             return PE_ERROR_PARSE_IMPORT_THUNKS;
 
-        if(*thunk == 0)
+        if (*thunk == 0)
             break;
-  
+
         if (*thunk & IMAGE_ORDINAL_FLAG64)
-           printf("    [Ordinal] %u\n", (uint32_t)(*thunk & 0xFFFF));
-        else{
+            printf("    [Ordinal] %u\n", (uint32_t)(*thunk & 0xFFFF));
+        else
+        {
             nameOffset = RvaToOffset((uint32_t)(*thunk), ctx);
-        if(nameOffset == 0)
-            return PE_ERROR_PARSE_IMPORT_THUNKS;
-        if(nameOffset + sizeof(uint16_t) + 1 > ctx->fileSize)
-            return PE_ERROR_PARSE_IMPORT_THUNKS;
-        const uint16_t * hint = (const uint16_t *) (ctx->fileData + nameOffset);
-        const char * funcNamePtr = (const char *) (hint + 1);
-        if(memchr(funcNamePtr, '\0', ctx->fileSize - (nameOffset + 2)) == NULL)
-            return PE_ERROR_PARSE_IMPORT_THUNKS;
-        printf("    [FuncName] %s (Hint: %u)\n", funcNamePtr, *hint);
-    }
-            thunk++;
+            if (nameOffset == 0)
+                return PE_ERROR_PARSE_IMPORT_THUNKS;
+            if (nameOffset + sizeof(uint16_t) + 1 > ctx->fileSize)
+                return PE_ERROR_PARSE_IMPORT_THUNKS;
+            const uint16_t *hint = (const uint16_t *)(ctx->fileData + nameOffset);
+            const char *funcNamePtr = (const char *)(hint + 1);
+            if (memchr(funcNamePtr, '\0', ctx->fileSize - (nameOffset + 2)) == NULL)
+                return PE_ERROR_PARSE_IMPORT_THUNKS;
+            printf("    [FuncName] %s (Hint: %u)\n", funcNamePtr, *hint);
+        }
+        thunk++;
     }
     return PE_SUCCESS;
 }
 
-static pe_status_t parseImportDirectory(const pe_analyzer *ctx){
-    if(ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress == 0 || ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].size == 0)
+static pe_status_t parseImportDirectory(const pe_analyzer *ctx)
+{
+    if (ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress == 0 || ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].size == 0)
         return PE_SUCCESS;
 
     uint32_t rawOffset = RvaToOffset(ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress, ctx);
-    if(rawOffset == 0)
+    if (rawOffset == 0)
         return PE_ERROR_INVALID_IMPORT_TABLE;
-    
+
     const image_import_descriptor *importDesc = (const image_import_descriptor *)(ctx->fileData + rawOffset);
 
-   while(1){
-        if((const uint8_t *)(importDesc + 1) > ctx->fileData + ctx->fileSize)
+    while (1)
+    {
+        if ((const uint8_t *)(importDesc + 1) > ctx->fileData + ctx->fileSize)
             return PE_ERROR_INVALID_IMPORT_TABLE;
-        if(importDesc->name == 0 && importDesc->firstThunk == 0)
+        if (importDesc->name == 0 && importDesc->firstThunk == 0)
             break;
 
-        uint32_t dllName = RvaToOffset(importDesc->name, ctx); 
-        if(dllName == 0)
-        return PE_ERROR_INVALID_IMPORT_TABLE;
+        uint32_t dllName = RvaToOffset(importDesc->name, ctx);
+        if (dllName == 0)
+            return PE_ERROR_INVALID_IMPORT_TABLE;
 
         const char *dllNameStr = (const char *)(ctx->fileData + dllName);
         int maxLen = ctx->fileSize - dllName;
-        if(memchr(dllNameStr, '\0', maxLen) == NULL) 
+        if (memchr(dllNameStr, '\0', maxLen) == NULL)
             return PE_ERROR_INVALID_IMPORT_TABLE;
 
         printf("%s\n", dllNameStr);
         parseImportThunks(ctx, importDesc);
         importDesc++;
     }
+    return PE_SUCCESS;
+}
+
+pe_status_t parseExportDirectory(const pe_analyzer *ctx)
+{
+    const image_data_directory *dataDirectory = &ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (dataDirectory->virtualAddress == 0 || dataDirectory->size == 0)
+        return PE_SUCCESS;
+
+    // 1. תרגום ה-RVA של ה-Export Directory ואימות 40 הבייטים של המבנה
+    const uint32_t offsetDataDirectory = RvaToOffset(dataDirectory->virtualAddress, ctx);
+    if (offsetDataDirectory == 0)
+        return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+    if (offsetDataDirectory + sizeof(image_export_directory) > ctx->fileSize)
+        return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+    const image_export_directory *exportDir = (const image_export_directory *)(ctx->fileData + offsetDataDirectory);
+
+    // 2. חילוץ ואימות מחרוזת שם המודול
+    uint32_t nameRva = exportDir->name;
+    const uint32_t offsetName = RvaToOffset(nameRva, ctx);
+    if (offsetName == 0)
+        return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+    const char *moduleName = (const char *)(ctx->fileData + offsetName);
+    if (memchr(moduleName, '\0', ctx->fileSize - offsetName) == NULL)
+        return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+    printf("\n--- Export Directory: %s ---\n", moduleName);
+    printf("Base Ordinal: %u | Functions: %u | Names: %u\n\n",
+           exportDir->base, exportDir->numberOfFunctions, exportDir->numberOfNames);
+
+    // 3. מיפוי מערך כתובות הפונקציות (AddressOfFunctions / EAT)
+    if (exportDir->numberOfFunctions == 0 || exportDir->addressOfFunctions == 0)
+        return PE_SUCCESS;
+
+    uint32_t offsetFunctions = RvaToOffset(exportDir->addressOfFunctions, ctx);
+    if (offsetFunctions == 0)
+        return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+    if ((uint64_t)offsetFunctions + ((uint64_t)exportDir->numberOfFunctions * sizeof(uint32_t)) > ctx->fileSize)
+        return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+    const uint32_t *functions = (const uint32_t *)(ctx->fileData + offsetFunctions);
+
+    // 4. פענוח שמות ו-Ordinals (רק אם יש שמות לייצא)
+    if (exportDir->numberOfNames > 0)
+    {
+        if (exportDir->addressOfNames == 0 || exportDir->addressOfNameOrdinals == 0)
+            return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+        uint32_t offsetNames = RvaToOffset(exportDir->addressOfNames, ctx);
+        uint32_t offsetOrdinals = RvaToOffset(exportDir->addressOfNameOrdinals, ctx);
+
+        if (offsetNames == 0 || offsetOrdinals == 0)
+            return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+        if ((uint64_t)offsetNames + ((uint64_t)exportDir->numberOfNames * sizeof(uint32_t)) > ctx->fileSize ||
+            (uint64_t)offsetOrdinals + ((uint64_t)exportDir->numberOfNames * sizeof(uint16_t)) > ctx->fileSize)
+            return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+        const uint32_t *names = (const uint32_t *)(ctx->fileData + offsetNames);
+        const uint16_t *ordinals = (const uint16_t *)(ctx->fileData + offsetOrdinals);
+
+        // לולאת הרזולוציה וההצלבה
+        for (uint32_t i = 0; i < exportDir->numberOfNames; i++)
+        {
+            uint32_t funcNameRva = names[i];
+            uint32_t offsetNameRva = RvaToOffset(funcNameRva, ctx);
+            if (offsetNameRva == 0)
+                return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+            const char *funcName = (const char *)(ctx->fileData + offsetNameRva);
+            if (memchr(funcName, '\0', ctx->fileSize - offsetNameRva) == NULL)
+                return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+            uint16_t functionIndex = ordinals[i];
+            if (functionIndex >= exportDir->numberOfFunctions)
+                return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+            uint32_t funcRva = functions[functionIndex];
+            uint32_t actualOrdinal = exportDir->base + functionIndex;
+
+            // בדיקת Forwarded Export מול טווח ה-Export Data Directory
+            if (funcRva >= dataDirectory->virtualAddress &&
+                funcRva < (dataDirectory->virtualAddress + dataDirectory->size))
+            {
+                uint32_t offsetFuncRva = RvaToOffset(funcRva, ctx);
+                if (offsetFuncRva == 0)
+                    return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+                const char *forwardStr = (const char *)(ctx->fileData + offsetFuncRva);
+                if (memchr(forwardStr, '\0', ctx->fileSize - offsetFuncRva) == NULL)
+                    return PE_ERROR_PARSE_EXPORT_DIRECTORY;
+
+                printf("    [Forwarded] Ordinal: %-5u | Name: %-35s -> %s\n",
+                       actualOrdinal, funcName, forwardStr);
+            }
+            else
+            {
+                printf("    [Export]    Ordinal: %-5u | RVA: 0x%08X | Name: %s\n",
+                       actualOrdinal, funcRva, funcName);
+            }
+        }
+    }
+
     return PE_SUCCESS;
 }
 
