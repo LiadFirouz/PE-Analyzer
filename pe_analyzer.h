@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define DOS_HEADER_PADDING 58
 #define IMAGE_DOS_SIGNATURE 0x5A4D
@@ -30,6 +31,10 @@
 #define IMAGE_DIRECTORY_ENTRY_IAT       12
 #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
 
+#define IMAGE_SCN_MEM_EXECUTE 0x20000000
+#define IMAGE_SCN_MEM_READ 0x40000000
+#define IMAGE_SCN_MEM_WRITE 0x80000000
+
 // 1. Define the enum first, so the functions below can use it
 typedef enum {
     PE_SUCCESS, 
@@ -44,7 +49,8 @@ typedef enum {
     PE_ERROR_INVALID_SECTION_HEADER,
     PE_ERROR_INVALID_IMPORT_TABLE,
     PE_ERROR_PARSE_IMPORT_THUNKS,
-    PE_ERROR_PARSE_EXPORT_DIRECTORY
+    PE_ERROR_PARSE_EXPORT_DIRECTORY,
+    PE_ERROR_PARSE_SECTION_HEADER
 } pe_status_t;
 
 // 2. Definition of the PE structures

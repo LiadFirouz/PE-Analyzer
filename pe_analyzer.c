@@ -9,6 +9,7 @@ uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
 static pe_status_t parseImportDirectory(const pe_analyzer *ctx);
 static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc);
 pe_status_t parseExportDirectory(const pe_analyzer *ctx);
+pe_status_t parseSectionHeaders(const pe_analyzer *ctx);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -138,6 +139,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
 
     parseImportDirectory(ctx);
     parseExportDirectory(ctx);
+    parseSectionHeaders(ctx);
     return PE_SUCCESS;
 }
 
@@ -257,7 +259,6 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
     if (dataDirectory->virtualAddress == 0 || dataDirectory->size == 0)
         return PE_SUCCESS;
 
-    // 1. תרגום ה-RVA של ה-Export Directory ואימות 40 הבייטים של המבנה
     const uint32_t offsetDataDirectory = RvaToOffset(dataDirectory->virtualAddress, ctx);
     if (offsetDataDirectory == 0)
         return PE_ERROR_PARSE_EXPORT_DIRECTORY;
@@ -267,7 +268,6 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
 
     const image_export_directory *exportDir = (const image_export_directory *)(ctx->fileData + offsetDataDirectory);
 
-    // 2. חילוץ ואימות מחרוזת שם המודול
     uint32_t nameRva = exportDir->name;
     const uint32_t offsetName = RvaToOffset(nameRva, ctx);
     if (offsetName == 0)
@@ -281,7 +281,6 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
     printf("Base Ordinal: %u | Functions: %u | Names: %u\n\n",
            exportDir->base, exportDir->numberOfFunctions, exportDir->numberOfNames);
 
-    // 3. מיפוי מערך כתובות הפונקציות (AddressOfFunctions / EAT)
     if (exportDir->numberOfFunctions == 0 || exportDir->addressOfFunctions == 0)
         return PE_SUCCESS;
 
@@ -294,7 +293,6 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
 
     const uint32_t *functions = (const uint32_t *)(ctx->fileData + offsetFunctions);
 
-    // 4. פענוח שמות ו-Ordinals (רק אם יש שמות לייצא)
     if (exportDir->numberOfNames > 0)
     {
         if (exportDir->addressOfNames == 0 || exportDir->addressOfNameOrdinals == 0)
@@ -313,7 +311,6 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
         const uint32_t *names = (const uint32_t *)(ctx->fileData + offsetNames);
         const uint16_t *ordinals = (const uint16_t *)(ctx->fileData + offsetOrdinals);
 
-        // לולאת הרזולוציה וההצלבה
         for (uint32_t i = 0; i < exportDir->numberOfNames; i++)
         {
             uint32_t funcNameRva = names[i];
@@ -332,7 +329,6 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
             uint32_t funcRva = functions[functionIndex];
             uint32_t actualOrdinal = exportDir->base + functionIndex;
 
-            // בדיקת Forwarded Export מול טווח ה-Export Data Directory
             if (funcRva >= dataDirectory->virtualAddress &&
                 funcRva < (dataDirectory->virtualAddress + dataDirectory->size))
             {
@@ -353,6 +349,56 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
                        actualOrdinal, funcRva, funcName);
             }
         }
+    }
+
+    return PE_SUCCESS;
+}
+
+pe_status_t parseSectionHeaders(const pe_analyzer *ctx)
+{
+    uint32_t offsetSectionTable = ctx->dosHeader->e_lfanew + sizeof(uint32_t) + sizeof(image_file_header) + ctx->fileHeader->sizeOfOptionalHeader;
+    if (ctx->fileHeader->numberOfSections == 0)
+        return PE_ERROR_PARSE_SECTION_HEADER;
+
+    if ((uint64_t)offsetSectionTable + ((uint64_t)ctx->fileHeader->numberOfSections * sizeof(image_section_header)) > ctx->fileSize)
+        return PE_ERROR_PARSE_SECTION_HEADER;
+    const image_section_header *sections = (const image_section_header *)(ctx->fileData + offsetSectionTable);
+
+    for (uint32_t i = 0; i < ctx->fileHeader->numberOfSections; i++)
+    {
+        char safeName[9];
+        memcpy(safeName, sections[i].name, 8);
+        safeName[8] = '\0';
+        if (sections[i].sizeOfRawData > 0)
+        {
+            uint64_t headersEnd = offsetSectionTable + ctx->fileHeader->numberOfSections * sizeof(image_section_header);
+            if ((uint64_t)sections[i].pointerToRawData < headersEnd ||
+                (uint64_t)sections[i].pointerToRawData + sections[i].sizeOfRawData > ctx->fileSize)
+            {
+                return PE_ERROR_INVALID_SECTION_HEADER;
+            }
+        }
+        bool isExec = (sections[i].characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+        bool isRead = (sections[i].characteristics & IMAGE_SCN_MEM_READ) != 0;
+        bool isWrite = (sections[i].characteristics & IMAGE_SCN_MEM_WRITE) != 0;
+        char perms[4] = "---";
+
+        if (isRead)
+            perms[0] = 'R';
+        if (isWrite)
+            perms[1] = 'W';
+        if (isExec)
+            perms[2] = 'X';
+
+        if (isWrite && isExec)
+            printf("[!] WARNING: W^X Violation detected in section %s!\n", safeName);
+        printf("  [%-8s] VA: 0x%08X | VSize: 0x%08X | RawOffset: 0x%08X | RawSize: 0x%08X | Perms: [%s]\n",
+               safeName,
+               sections[i].virtualAddress,
+               sections[i].virtualSize,
+               sections[i].pointerToRawData,
+               sections[i].sizeOfRawData,
+               perms);
     }
 
     return PE_SUCCESS;
