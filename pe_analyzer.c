@@ -404,6 +404,92 @@ pe_status_t parseSectionHeaders(const pe_analyzer *ctx)
     return PE_SUCCESS;
 }
 
+pe_status_t initItems(string_vector_t *itemsVector)
+{
+    if (itemsVector == NULL)
+    {
+        return PE_ERROR_NULL_POINTER;
+    }
+
+    itemsVector->items = NULL;
+    itemsVector->capacity = 0;
+    itemsVector->size = 0;
+    return PE_SUCCESS;
+}
+
+pe_status_t pushItem(string_vector_t *itemsVector, const char *name)
+{
+    if (itemsVector == NULL || name == 0)
+        return PE_ERROR_NULL_POINTER;
+
+    if (itemsVector->size >= itemsVector->capacity)
+    {
+        uint32_t newCap = (itemsVector->capacity == 0) ? 64 : itemsVector->capacity * 2;
+        size_t bytes = newCap * sizeof(const char *);
+        const char **newItems = realloc(itemsVector->items, bytes);
+
+        if (newItems == NULL)
+            return PE_ERROR_OUT_OF_MEMORY;
+
+        itemsVector->items = newItems;
+        itemsVector->capacity = newCap;
+    }
+    itemsVector->items[itemsVector->size] = name;
+    itemsVector->size++;
+    return PE_SUCCESS;
+}
+
+void freeItems(string_vector_t *itemsVector)
+{
+    if (itemsVector == NULL)
+        return;
+
+    free(itemsVector->items);
+    itemsVector->capacity = 0;
+    itemsVector->size = 0;
+    itemsVector->items = NULL;
+}
+
+void analyzeImportsHeuristics(const string_vector_t *imports, const heuristic_rule_t *rules, size_t ruleCount)
+{
+    if (imports == NULL || rules == NULL || ruleCount == 0)
+        return;
+    for (size_t r = 0; r < ruleCount; r++)
+    {
+        size_t matchCount = 0;
+        for (size_t i = 0; i < rules[r].apiCount; i++)
+        {
+            for (size_t j = 0; j < imports->size; j++)
+            {
+                if (strcmp(rules[r].apis[i], imports->items[j]) == 0)
+                {
+                    matchCount++;
+                    break;
+                }
+            }
+        }
+        if (matchCount >= rules[r].threshold)
+            printf("Threat: %s | Category: %s\n", rules[r].description, threatTypeToString(rules[r].threatCategory));
+    }
+}
+
+const char *threatTypeToString(pe_threat_type_t type)
+{
+    switch (type)
+    {
+    case INJECTION:
+        return "Process Injection";
+    case NETWORK_C2:
+        return "Network / C2";
+    case EVASION_PACKING:
+        return "Evasion / Packing";
+    case KEYLOGGING_SURVEILLANCE:
+        return "Keylogging / Surveillance";
+    default:
+        return "Unknown Threat";
+    }
+}
+
 // Cleans up allocated resources, unmaps memory, and closes file descriptors
 void freeResources(pe_analyzer *ctx)
 {

@@ -20,15 +20,15 @@
 #define IMAGE_SIZEOF_SHORT_NAME 8
 #define IMAGE_ORDINAL_FLAG64 0x8000000000000000ULL
 
-#define IMAGE_DIRECTORY_ENTRY_EXPORT    0
-#define IMAGE_DIRECTORY_ENTRY_IMPORT    1
-#define IMAGE_DIRECTORY_ENTRY_RESOURCE  2
+#define IMAGE_DIRECTORY_ENTRY_EXPORT 0
+#define IMAGE_DIRECTORY_ENTRY_IMPORT 1
+#define IMAGE_DIRECTORY_ENTRY_RESOURCE 2
 #define IMAGE_DIRECTORY_ENTRY_EXCEPTION 3
-#define IMAGE_DIRECTORY_ENTRY_SECURITY  4
+#define IMAGE_DIRECTORY_ENTRY_SECURITY 4
 #define IMAGE_DIRECTORY_ENTRY_BASERELOC 5
-#define IMAGE_DIRECTORY_ENTRY_DEBUG     6
-#define IMAGE_DIRECTORY_ENTRY_TLS       7
-#define IMAGE_DIRECTORY_ENTRY_IAT       12
+#define IMAGE_DIRECTORY_ENTRY_DEBUG 6
+#define IMAGE_DIRECTORY_ENTRY_TLS 7
+#define IMAGE_DIRECTORY_ENTRY_IAT 12
 #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
 
 #define IMAGE_SCN_MEM_EXECUTE 0x20000000
@@ -36,31 +36,44 @@
 #define IMAGE_SCN_MEM_WRITE 0x80000000
 
 // 1. Define the enum first, so the functions below can use it
-typedef enum {
-    PE_SUCCESS, 
-    PE_ERROR_FILE_OPEN, 
-    PE_ERROR_STAT, 
-    PE_ERROR_MMAP, 
-    PE_ERROR_FILE_TOO_SMALL, 
-    PE_ERROR_INVALID_DOS_SIGNATURE, 
-    PE_ERROR_INVALID_NT_OFFSET, 
+typedef enum
+{
+    PE_SUCCESS,
+    PE_ERROR_FILE_OPEN,
+    PE_ERROR_STAT,
+    PE_ERROR_MMAP,
+    PE_ERROR_FILE_TOO_SMALL,
+    PE_ERROR_INVALID_DOS_SIGNATURE,
+    PE_ERROR_INVALID_NT_OFFSET,
     PE_ERROR_INVALID_PE_SIGNATURE,
     PE_ERROR_INVALID_HEADER_OFFSET,
     PE_ERROR_INVALID_SECTION_HEADER,
     PE_ERROR_INVALID_IMPORT_TABLE,
     PE_ERROR_PARSE_IMPORT_THUNKS,
     PE_ERROR_PARSE_EXPORT_DIRECTORY,
-    PE_ERROR_PARSE_SECTION_HEADER
+    PE_ERROR_PARSE_SECTION_HEADER,
+    PE_ERROR_NULL_POINTER,
+    PE_ERROR_OUT_OF_MEMORY
 } pe_status_t;
 
+typedef enum
+{
+    NETWORK_C2,
+    INJECTION,
+    EVASION_PACKING,
+    KEYLOGGING_SURVEILLANCE
+} pe_threat_type_t;
+
 // 2. Definition of the PE structures
-typedef struct image_dos_header {
+typedef struct image_dos_header
+{
     uint16_t e_magic;
     uint8_t padding[DOS_HEADER_PADDING];
     uint32_t e_lfanew;
 } __attribute__((packed)) image_dos_header;
 
-typedef struct image_file_header {
+typedef struct image_file_header
+{
     uint16_t machine;
     uint16_t numberOfSections;
     uint32_t timeDateStamp;
@@ -70,27 +83,30 @@ typedef struct image_file_header {
     uint16_t characteristics;
 } __attribute__((packed)) image_file_header;
 
-
-typedef struct image_data_directory {
+typedef struct image_data_directory
+{
     uint32_t virtualAddress;
     uint32_t size;
 
-}  __attribute__((packed)) image_data_directory;
+} __attribute__((packed)) image_data_directory;
 
-typedef struct image_import_descriptor {
+typedef struct image_import_descriptor
+{
     uint32_t originalFirstThunk;
     uint32_t timeDateStamp;
     uint32_t forwarderChain;
     uint32_t name;
     uint32_t firstThunk;
-}  __attribute__((packed)) image_import_descriptor;
+} __attribute__((packed)) image_import_descriptor;
 
-typedef struct image_import_by_name {
+typedef struct image_import_by_name
+{
     uint16_t hint;
     uint8_t name[1];
-}  __attribute__((packed)) image_import_by_name;
+} __attribute__((packed)) image_import_by_name;
 
-typedef struct image_optional_header_64 {
+typedef struct image_optional_header_64
+{
     uint16_t magic;
     uint8_t majorLinkerVersion;
     uint8_t minorLinkerVersion;
@@ -123,7 +139,8 @@ typedef struct image_optional_header_64 {
     image_data_directory dataDirectory[16];
 } __attribute__((packed)) image_optional_header_64;
 
-typedef struct image_section_header {
+typedef struct image_section_header
+{
     uint8_t name[IMAGE_SIZEOF_SHORT_NAME];
     uint32_t virtualSize;
     uint32_t virtualAddress;
@@ -136,23 +153,24 @@ typedef struct image_section_header {
     uint32_t characteristics;
 } __attribute__((packed)) image_section_header;
 
-
-typedef struct image_export_directory {
-    uint32_t characteristics;        
-    uint32_t timeDateStamp;         
+typedef struct image_export_directory
+{
+    uint32_t characteristics;
+    uint32_t timeDateStamp;
     uint16_t majorVersion;
     uint16_t minorVersion;
-    uint32_t name;                   
-    uint32_t base;                  
-    uint32_t numberOfFunctions;      
-    uint32_t numberOfNames;          
-    uint32_t addressOfFunctions;     
-    uint32_t addressOfNames;         
-    uint32_t addressOfNameOrdinals;  
+    uint32_t name;
+    uint32_t base;
+    uint32_t numberOfFunctions;
+    uint32_t numberOfNames;
+    uint32_t addressOfFunctions;
+    uint32_t addressOfNames;
+    uint32_t addressOfNameOrdinals;
 } __attribute__((packed)) image_export_directory;
 
 // 3. Definition of the Analyzer itself (which now recognizes the headers defined above)
-typedef struct pe_analyzer {
+typedef struct pe_analyzer
+{
     const uint8_t *fileData;
     const image_dos_header *dosHeader;
     const uint8_t *ntHeader;
@@ -164,6 +182,32 @@ typedef struct pe_analyzer {
     const uint8_t *optHeader;
 } pe_analyzer;
 
+typedef struct image_import_descriptor
+{
+    uint32_t originalFirstThunk;
+    uint32_t FirstThunk;
+} __attribute__((packed)) image_import_descriptor;
+
+typedef struct string_vector_t
+{
+    const char **items;
+    size_t size;
+    size_t capacity;
+} string_vector_t;
+
+typedef struct heuristic_rule_t
+{
+    pe_threat_type_t threatCategory;
+    const char * description;
+    const char ** apis;
+    size_t apiCount;
+    size_t threshold;
+} heuristic_rule_t;
+
+pe_status_t initItems(string_vector_t *itemsVector);
+pe_status_t pushItem(string_vector_t *itemsVector, const char *name);
+void freeItems(string_vector_t *itemsVector);
+void analyzeImportsHeuristics(const string_vector_t *imports,const heuristic_rule_t *rules, size_t ruleCount);
 
 
 // 4. Finally - Declaration of public functions only!
