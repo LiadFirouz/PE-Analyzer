@@ -6,10 +6,15 @@
 static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath);
 static pe_status_t parsingLayout(pe_analyzer *ctx);
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
-static pe_status_t parseImportDirectory(const pe_analyzer *ctx);
-static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc);
+static pe_status_t parseImportDirectory(const pe_analyzer *ctx, string_vector_t *imports);
+static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc, string_vector_t *imports);
 pe_status_t parseExportDirectory(const pe_analyzer *ctx);
 pe_status_t parseSectionHeaders(const pe_analyzer *ctx);
+const char *threatTypeToString(pe_threat_type_t type);
+pe_status_t initItems(string_vector_t *itemsVector);
+pe_status_t pushItem(string_vector_t *itemsVector, const char *name);
+void freeItems(string_vector_t *itemsVector);
+void analyzeImportsHeuristics(const string_vector_t *imports, const heuristic_rule_t *rules, size_t ruleCount);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -136,10 +141,14 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
         freeResources(ctx);
         return PE_ERROR_INVALID_SECTION_HEADER;
     }
-
-    parseImportDirectory(ctx);
+    string_vector_t imports;
+    initItems(&imports);
+    parseImportDirectory(ctx, &imports);
     parseExportDirectory(ctx);
+    analyzeImportsHeuristics(&imports, HEURISTIC_RULES, RULE_COUNT);
     parseSectionHeaders(ctx);
+    freeItems(&imports);
+
     return PE_SUCCESS;
 }
 
@@ -175,7 +184,7 @@ uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx)
     return 0;
 }
 
-static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc)
+static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc, string_vector_t *imports)
 {
     uint32_t thunkRva = 0;
     if (importDesc->originalFirstThunk != 0)
@@ -213,13 +222,14 @@ static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_
             if (memchr(funcNamePtr, '\0', ctx->fileSize - (nameOffset + 2)) == NULL)
                 return PE_ERROR_PARSE_IMPORT_THUNKS;
             printf("    [FuncName] %s (Hint: %u)\n", funcNamePtr, *hint);
+            pushItem(imports, funcNamePtr);
         }
         thunk++;
     }
     return PE_SUCCESS;
 }
 
-static pe_status_t parseImportDirectory(const pe_analyzer *ctx)
+static pe_status_t parseImportDirectory(const pe_analyzer *ctx, string_vector_t *imports)
 {
     if (ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress == 0 || ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].size == 0)
         return PE_SUCCESS;
@@ -242,12 +252,14 @@ static pe_status_t parseImportDirectory(const pe_analyzer *ctx)
             return PE_ERROR_INVALID_IMPORT_TABLE;
 
         const char *dllNameStr = (const char *)(ctx->fileData + dllName);
-        int maxLen = ctx->fileSize - dllName;
+        if (dllName >= ctx->fileSize)
+            return PE_ERROR_INVALID_IMPORT_TABLE;
+        size_t maxLen = ctx->fileSize - dllName;
         if (memchr(dllNameStr, '\0', maxLen) == NULL)
             return PE_ERROR_INVALID_IMPORT_TABLE;
 
         printf("%s\n", dllNameStr);
-        parseImportThunks(ctx, importDesc);
+        parseImportThunks(ctx, importDesc, imports);
         importDesc++;
     }
     return PE_SUCCESS;

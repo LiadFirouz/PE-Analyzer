@@ -5,6 +5,8 @@
 
 #define NUM_OF_MIN_FILES 2
 
+
+
 int main(int argc, char *args[])
 {
     if (argc < NUM_OF_MIN_FILES){

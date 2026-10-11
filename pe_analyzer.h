@@ -182,12 +182,6 @@ typedef struct pe_analyzer
     const uint8_t *optHeader;
 } pe_analyzer;
 
-typedef struct image_import_descriptor
-{
-    uint32_t originalFirstThunk;
-    uint32_t FirstThunk;
-} __attribute__((packed)) image_import_descriptor;
-
 typedef struct string_vector_t
 {
     const char **items;
@@ -198,17 +192,26 @@ typedef struct string_vector_t
 typedef struct heuristic_rule_t
 {
     pe_threat_type_t threatCategory;
-    const char * description;
-    const char ** apis;
+    const char *description;
+    const char **apis;
     size_t apiCount;
     size_t threshold;
 } heuristic_rule_t;
 
-pe_status_t initItems(string_vector_t *itemsVector);
-pe_status_t pushItem(string_vector_t *itemsVector, const char *name);
-void freeItems(string_vector_t *itemsVector);
-void analyzeImportsHeuristics(const string_vector_t *imports,const heuristic_rule_t *rules, size_t ruleCount);
+// Process Injection Chain
+static const char *injection_apis[] = {
+    "VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "OpenProcess"};
 
+// Network / Command & Control
+static const char *network_apis[] = {
+    "InternetOpenA", "HttpSendRequestA", "WSAStartup", "URLDownloadToFileA"};
+
+// Rules Table
+static const heuristic_rule_t HEURISTIC_RULES[] = {
+    {INJECTION, "Process Injection Capability", injection_apis, 4, 2},
+    {NETWORK_C2, "Network / C2 Communication Capability", network_apis, 4, 1}};
+
+static const size_t RULE_COUNT = sizeof(HEURISTIC_RULES) / sizeof(HEURISTIC_RULES[0]);
 
 // 4. Finally - Declaration of public functions only!
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath);
