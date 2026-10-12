@@ -15,6 +15,9 @@ pe_status_t initItems(string_vector_t *itemsVector);
 pe_status_t pushItem(string_vector_t *itemsVector, const char *name);
 void freeItems(string_vector_t *itemsVector);
 void analyzeImportsHeuristics(const string_vector_t *imports, const heuristic_rule_t *rules, size_t ruleCount);
+void analyzeSectionAnomalies(const pe_analyzer *ctx);
+double calculateEntropy(const uint8_t *data, size_t size);
+pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -147,6 +150,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
     parseExportDirectory(ctx);
     analyzeImportsHeuristics(&imports, HEURISTIC_RULES, RULE_COUNT);
     parseSectionHeaders(ctx);
+    analyzeSectionAnomalies(ctx);
     freeItems(&imports);
 
     return PE_SUCCESS;
@@ -501,6 +505,64 @@ const char *threatTypeToString(pe_threat_type_t type)
         return "Unknown Threat";
     }
 }
+
+void analyzeSectionAnomalies(const pe_analyzer *ctx)
+{
+    if (!(ctx != NULL && ctx->fileHeader != NULL && ctx->sectionHeaders != NULL))
+        return;
+
+    for (size_t i = 0; i < ctx->fileHeader->numberOfSections; i++)
+    {
+        const image_section_header *sec = &ctx->sectionHeaders[i];
+        bool isWrite = (sec->characteristics & IMAGE_SCN_MEM_WRITE) != 0;
+        bool isExec = (sec->characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+        char safeName[9] = {0};
+        memcpy(safeName, sec->name, 8);
+        if (isWrite && isExec)
+        {
+            printf("[!] ANOMALY: W^X Violation in section [%s]\n", safeName);
+        }
+        if ((sec->sizeOfRawData > 0 && sec->virtualSize >= sec->sizeOfRawData * 3) ||
+            (sec->sizeOfRawData == 0 && sec->virtualSize > 0))
+        {
+            printf("[!] ANOMALY: Size Mismatch [%s]\n", safeName);
+        }
+        double ent = 0.0;
+        if (sec->sizeOfRawData > 0 && sec->pointerToRawData <= ctx->fileSize &&
+            sec->sizeOfRawData <= ctx->fileSize - sec->pointerToRawData)
+        {
+            ent = calculateEntropy(ctx->fileData + sec->pointerToRawData, sec->sizeOfRawData);
+        }
+        if (ent > 7.2)
+        {
+            printf("[!] ANOMALY: High Entropy (%4.2f) in section [%s] -> Suspected Encrypted/Packed Data\n", ent, safeName);
+        }
+    }
+}
+
+double calculateEntropy(const uint8_t *data, size_t size)
+{
+    double entropy = 0;
+    if (size == 0 || data == NULL)
+        return 0;
+    uint64_t frequencies[256] = {0};
+    for (uint32_t i = 0; i < size; i++)
+    {
+        frequencies[data[i]]++;
+    }
+
+    for (uint32_t j = 0; j < 256; j++)
+    {
+        if (frequencies[j] != 0)
+        {
+            double p = (double)frequencies[j] / size;
+            entropy -= p * log2(p);
+        }
+    }
+    return entropy;
+}
+
+pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx){}
 
 // Cleans up allocated resources, unmaps memory, and closes file descriptors
 void freeResources(pe_analyzer *ctx)

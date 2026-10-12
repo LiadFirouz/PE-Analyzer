@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 
 #define DOS_HEADER_PADDING 58
 #define IMAGE_DOS_SIGNATURE 0x5A4D
