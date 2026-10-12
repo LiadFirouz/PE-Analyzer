@@ -151,6 +151,7 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
     analyzeImportsHeuristics(&imports, HEURISTIC_RULES, RULE_COUNT);
     parseSectionHeaders(ctx);
     analyzeSectionAnomalies(ctx);
+    analyzeSecurityMitigations(ctx);
     freeItems(&imports);
 
     return PE_SUCCESS;
@@ -562,7 +563,44 @@ double calculateEntropy(const uint8_t *data, size_t size)
     return entropy;
 }
 
-pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx){}
+pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx){
+    if(ctx == NULL || ctx->optHeader64 == NULL)
+        return PE_SECURITY_MITIGATIONS_FAILED;
+    uint16_t dllC = ctx->optHeader64->dllCharacteristics;
+    printf("Enabled Security Mitigations: \n");
+    if(dllC & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA || dllC & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE)
+        {
+            printf("+ ASLR\n");
+        }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY){
+        printf("+ Force Integrity\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_NX_COMPAT){
+        printf("+ DEP/NX\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_NO_ISOLATION){
+        printf("+ No Isolation\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_NO_SEH){
+        printf("+ SafeSEH\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_NO_BIND){
+        printf("+ BIND\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_APPCONTAINER){
+        printf("+ APPCONTAINER\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_WDM_DRIVER){
+        printf("+ WDM DRIVER\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_GUARD_CF){
+        printf("+ CFG\n");
+    }
+    if(dllC & IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE ){
+        printf("+ TERMINAL SERVER AWARE \n");
+    }
+    return PE_SUCCESS;
+}
 
 // Cleans up allocated resources, unmaps memory, and closes file descriptors
 void freeResources(pe_analyzer *ctx)

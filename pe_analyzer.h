@@ -36,6 +36,18 @@
 #define IMAGE_SCN_MEM_READ 0x40000000
 #define IMAGE_SCN_MEM_WRITE 0x80000000
 
+#define IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA    0x0020  // ASLR: 64-bit entropy
+#define IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE       0x0040  // ASLR: DLL can be relocated
+#define IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY    0x0080  // Code integrity checks enforced
+#define IMAGE_DLLCHARACTERISTICS_NX_COMPAT          0x0100  // DEP: Data Execution Prevention
+#define IMAGE_DLLCHARACTERISTICS_NO_ISOLATION       0x0200  // Isolation aware
+#define IMAGE_DLLCHARACTERISTICS_NO_SEH             0x0400  // SafeSEH: No Structured Exception Handling
+#define IMAGE_DLLCHARACTERISTICS_NO_BIND            0x0800  // Do not bind the image
+#define IMAGE_DLLCHARACTERISTICS_APPCONTAINER       0x1000  // Image must run in an AppContainer
+#define IMAGE_DLLCHARACTERISTICS_WDM_DRIVER         0x2000  // WDM driver
+#define IMAGE_DLLCHARACTERISTICS_GUARD_CF           0x4000  // Control Flow Guard (CFG)
+#define IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE 0x8000 // Terminal Server aware
+
 // 1. Define the enum first, so the functions below can use it
 typedef enum
 {
@@ -54,7 +66,8 @@ typedef enum
     PE_ERROR_PARSE_EXPORT_DIRECTORY,
     PE_ERROR_PARSE_SECTION_HEADER,
     PE_ERROR_NULL_POINTER,
-    PE_ERROR_OUT_OF_MEMORY
+    PE_ERROR_OUT_OF_MEMORY,
+    PE_SECURITY_MITIGATIONS_FAILED
 } pe_status_t;
 
 typedef enum
