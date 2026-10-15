@@ -4,7 +4,7 @@
 
 // Forward Declarations for internal use
 static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath);
-static pe_status_t parsingLayout(pe_analyzer *ctx);
+static pe_status_t parsingLayout(pe_analyzer *ctx, const char *filepath);
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
 static pe_status_t parseImportDirectory(const pe_analyzer *ctx, string_vector_t *imports);
 static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc, string_vector_t *imports);
@@ -17,7 +17,9 @@ void freeItems(string_vector_t *itemsVector);
 void analyzeImportsHeuristics(const string_vector_t *imports, const heuristic_rule_t *rules, size_t ruleCount);
 void analyzeSectionAnomalies(const pe_analyzer *ctx);
 double calculateEntropy(const uint8_t *data, size_t size);
-pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx);
+pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx, pe_report_t *report);
+pe_status_t generateReport(const pe_analyzer *ctx, pe_report_t *report, const char *filepath);
+const char *verdictToStr(pe_verdict_type_t r);
 
 // Main entry function to load and parse a PE (Portable Executable) file
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
@@ -28,7 +30,7 @@ pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
         return status;
 
     // Parse and validate the PE layout and headers
-    return parsingLayout(ctx);
+    return parsingLayout(ctx, filepath);
 }
 
 // Handles opening the file, verifying its status, and mapping it to memory
@@ -89,7 +91,7 @@ static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath)
 }
 
 // Parses the mapped memory to locate and validate PE headers
-static pe_status_t parsingLayout(pe_analyzer *ctx)
+static pe_status_t parsingLayout(pe_analyzer *ctx, const char *filepath)
 {
     // Point the DOS header to the beginning of the mapped file
     ctx->dosHeader = (const image_dos_header *)ctx->fileData;
@@ -151,7 +153,9 @@ static pe_status_t parsingLayout(pe_analyzer *ctx)
     analyzeImportsHeuristics(&imports, HEURISTIC_RULES, RULE_COUNT);
     parseSectionHeaders(ctx);
     analyzeSectionAnomalies(ctx);
-    analyzeSecurityMitigations(ctx);
+    pe_report_t report = {0};
+    analyzeSecurityMitigations(ctx, &report);
+    generateReport(ctx, &report, filepath);
     freeItems(&imports);
 
     return PE_SUCCESS;
@@ -514,6 +518,7 @@ void analyzeSectionAnomalies(const pe_analyzer *ctx)
 
     for (size_t i = 0; i < ctx->fileHeader->numberOfSections; i++)
     {
+        printf("\n");
         const image_section_header *sec = &ctx->sectionHeaders[i];
         bool isWrite = (sec->characteristics & IMAGE_SCN_MEM_WRITE) != 0;
         bool isExec = (sec->characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
@@ -563,42 +568,125 @@ double calculateEntropy(const uint8_t *data, size_t size)
     return entropy;
 }
 
-pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx){
-    if(ctx == NULL || ctx->optHeader64 == NULL)
+pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx, pe_report_t *report)
+{
+    if (ctx == NULL || ctx->optHeader64 == NULL)
         return PE_SECURITY_MITIGATIONS_FAILED;
     uint16_t dllC = ctx->optHeader64->dllCharacteristics;
-    printf("Enabled Security Mitigations: \n");
-    if(dllC & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA || dllC & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE)
-        {
-            printf("+ ASLR\n");
-        }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY){
+    printf("\nEnabled Security Mitigations: \n");
+    if (dllC & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA || dllC & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE)
+    {
+        report->has_aslr = true;
+        printf("+ ASLR\n");
+    }
+    if (dllC & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY)
+    {
+        report->has_forceInteg = true;
         printf("+ Force Integrity\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_NX_COMPAT){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_NX_COMPAT)
+    {
+        report->has_DEPNX = true;
         printf("+ DEP/NX\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_NO_ISOLATION){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_NO_ISOLATION)
+    {
+        report->has_noIsolation = true;
         printf("+ No Isolation\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_NO_SEH){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_NO_SEH)
+    {
+        report->has_safeSEH = true;
         printf("+ SafeSEH\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_NO_BIND){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_NO_BIND)
+    {
+        report->has_bind = true;
         printf("+ BIND\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_APPCONTAINER){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_APPCONTAINER)
+    {
+        report->has_appcontainer = true;
         printf("+ APPCONTAINER\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_WDM_DRIVER){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_WDM_DRIVER)
+    {
+        report->has_WDN = true;
         printf("+ WDM DRIVER\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_GUARD_CF){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_GUARD_CF)
+    {
+        report->has_CFG = true;
         printf("+ CFG\n");
     }
-    if(dllC & IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE ){
+    if (dllC & IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE)
+    {
+        report->has_teminalServerAware = true;
         printf("+ TERMINAL SERVER AWARE \n");
     }
+    return PE_SUCCESS;
+}
+
+const char *verdictToStr(pe_verdict_type_t r)
+{
+    if (r == CLEAN)
+    {
+        return "Clean";
+    }
+    if (r == SUSPICIOUS)
+    {
+        return "Suspicious";
+    }
+    return "Malicious";
+}
+
+pe_status_t generateReport(const pe_analyzer *ctx, pe_report_t *report, const char *filepath)
+{
+    if (ctx == NULL || ctx->fileHeader == NULL || report == NULL)
+    {
+        return PE_ERROR_NULL_POINTER;
+    }
+    report->risk_score = 0;
+
+    if (!report->has_aslr)
+    {
+        report->risk_score += 20;
+    }
+    if (!report->has_DEPNX)
+    {
+        report->risk_score += 20;
+    }
+
+    if (!report->has_CFG)
+    {
+        report->risk_score += 5;
+    }
+    if (!report->has_safeSEH)
+    {
+        report->risk_score += 5;
+    }
+
+    if (report->risk_score < 40)
+    {
+        report->verdict = CLEAN;
+    }
+    else if (report->risk_score >= 40 && report->risk_score < 60)
+    {
+        report->verdict = SUSPICIOUS;
+    }
+    else
+    {
+        report->verdict = MALICIOUS;
+    }
+
+    const char *archStr = (ctx->fileHeader->machine == 0x8664) ? "x64 (PE32+)" : "x86 (PE32)";
+
+    printf("==================================================\n"
+           "                 PE ANALYSIS REPORT               \n"
+           "==================================================\n");
+    printf("Target File : [%s]\nArchitecture: [%s]\n--------------------------------------------------\n", filepath, archStr);
+    printf("Risk Score : [%zu]\nVerdict: [%s]\n--------------------------------------------------\n", report->risk_score, verdictToStr(report->verdict));
+
     return PE_SUCCESS;
 }
 

@@ -48,6 +48,9 @@
 #define IMAGE_DLLCHARACTERISTICS_GUARD_CF           0x4000  // Control Flow Guard (CFG)
 #define IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE 0x8000 // Terminal Server aware
 
+#define IMAGE_FILE_MACHINE_AMD64 0x8664
+#define IMAGE_FILE_MACHINE_I386 0x014c
+
 // 1. Define the enum first, so the functions below can use it
 typedef enum
 {
@@ -77,6 +80,13 @@ typedef enum
     EVASION_PACKING,
     KEYLOGGING_SURVEILLANCE
 } pe_threat_type_t;
+
+typedef enum
+{
+    CLEAN,
+    SUSPICIOUS,
+    MALICIOUS
+} pe_verdict_type_t;
 
 // 2. Definition of the PE structures
 typedef struct image_dos_header
@@ -211,6 +221,25 @@ typedef struct heuristic_rule_t
     size_t apiCount;
     size_t threshold;
 } heuristic_rule_t;
+
+typedef struct pe_report_t
+{
+    const char *filepath;
+    pe_verdict_type_t verdict;
+    size_t risk_score;
+    size_t anomaliesCounter;
+    string_vector_t findings;
+    bool has_aslr;
+    bool has_forceInteg;
+    bool has_DEPNX;
+    bool has_noIsolation;
+    bool has_safeSEH;
+    bool has_bind;
+    bool has_appcontainer;
+    bool has_WDN;
+    bool has_CFG;
+    bool has_teminalServerAware;
+} pe_report_t;
 
 // Process Injection Chain
 static const char *injection_apis[] = {
