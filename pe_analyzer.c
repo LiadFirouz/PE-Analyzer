@@ -1,8 +1,17 @@
+/**
+ * @file pe_analyzer.c
+ * @brief Static Portable Executable (PE) File Analyzer Core Engine.
+ *
+ * This module implements low-level parsing, structural analysis, heuristic threat
+ * detection, entropy calculation, and security mitigation checks for 32-bit and 64-bit
+ * Windows PE binaries (PE32 / PE32+).
+ */
+
 #include "pe_analyzer.h"
 #include <unistd.h>
 #include <errno.h>
 
-// Forward Declarations for internal use
+// Forward Declarations for internal implementation scope
 static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath);
 static pe_status_t parsingLayout(pe_analyzer *ctx, const char *filepath);
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx);
@@ -21,7 +30,13 @@ pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx, pe_report_t *repo
 pe_status_t generateReport(const pe_analyzer *ctx, pe_report_t *report, const char *filepath);
 const char *verdictToStr(pe_verdict_type_t r);
 
-// Main entry function to load and parse a PE (Portable Executable) file
+/**
+ * @brief Primary entry point to load, map, and analyze a PE file.
+ *
+ * @param ctx Pointer to the primary analyzer context structure.
+ * @param filepath Path to the target PE file on disk.
+ * @return pe_status_t Execution status code (PE_SUCCESS on successful parsing).
+ */
 pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
 {
     // Perform file I/O and map the file into memory
@@ -33,7 +48,16 @@ pe_status_t peLoad(pe_analyzer *ctx, const char *filepath)
     return parsingLayout(ctx, filepath);
 }
 
-// Handles opening the file, verifying its status, and mapping it to memory
+/**
+ * @brief Handles file opening, boundary checks, and virtual memory mapping.
+ *
+ * Uses POSIX mmap() to map the raw binary directly into the process's address space
+ * for efficient zero-copy pointer arithmetic during static binary analysis.
+ *
+ * @param ctx Pointer to the analyzer context.
+ * @param filepath Disk path of the binary file.
+ * @return pe_status_t PE_SUCCESS if successfully mapped, or appropriate error code.
+ */
 static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath)
 {
     // Basic pointer safety checks to ensure valid input
@@ -90,7 +114,17 @@ static pe_status_t IOLayout(pe_analyzer *ctx, const char *filepath)
     return PE_SUCCESS;
 }
 
-// Parses the mapped memory to locate and validate PE headers
+/**
+ * @brief Parses mapped binary headers, validates signatures, and drives execution stages.
+ *
+ * Validates IMAGE_DOS_SIGNATURE ("MZ") and IMAGE_NT_SIGNATURE ("PE\0\0"), maps section
+ * headers, and sequentially triggers import/export parsing, heuristic checks, section
+ * anomaly detection, OS mitigation analysis, and final report generation.
+ *
+ * @param ctx Pointer to the analyzer context.
+ * @param filepath Path string of the file being analyzed.
+ * @return pe_status_t Status code representing validation/parsing state.
+ */
 static pe_status_t parsingLayout(pe_analyzer *ctx, const char *filepath)
 {
     // Point the DOS header to the beginning of the mapped file
@@ -161,6 +195,17 @@ static pe_status_t parsingLayout(pe_analyzer *ctx, const char *filepath)
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Translates a Relative Virtual Address (RVA) to a raw file offset on disk.
+ *
+ * Iterates through section headers to identify which section encapsulates the RVA
+ * based on VirtualAddress and VirtualSize, then applies section delta math:
+ * FileOffset = PointerToRawData + (RVA - VirtualAddress).
+ *
+ * @param rva Relative Virtual Address to translate.
+ * @param ctx Pointer to the active PE analyzer context.
+ * @return uint32_t Raw file offset, or 0 if RVA is unmapped or out of physical bounds.
+ */
 uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx)
 {
     if (ctx == NULL || ctx->fileHeader == NULL || ctx->sectionHeaders == NULL)
@@ -193,6 +238,17 @@ uint32_t RvaToOffset(uint32_t rva, const pe_analyzer *ctx)
     return 0;
 }
 
+/**
+ * @brief Parses thunk arrays (ILT/IAT) for a given imported DLL descriptor.
+ *
+ * Traverses thunk tables to extract function hints and names, or ordinal import flags,
+ * pushing resolved API strings into the provided string vector.
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ * @param importDesc Pointer to the current IMAGE_IMPORT_DESCRIPTOR.
+ * @param imports Vector to store extracted import API names.
+ * @return pe_status_t PE_SUCCESS on success, error code on corrupted bounds.
+ */
 static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_descriptor *importDesc, string_vector_t *imports)
 {
     uint32_t thunkRva = 0;
@@ -238,6 +294,16 @@ static pe_status_t parseImportThunks(const pe_analyzer *ctx, const image_import_
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Parses the Import Directory Data Directory (IMAGE_DIRECTORY_ENTRY_IMPORT).
+ *
+ * Iterates over the null-terminated array of IMAGE_IMPORT_DESCRIPTOR structs to discover
+ * imported dynamic link libraries (DLLs) and their referenced functions.
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ * @param imports Vector to store extracted import API names across all modules.
+ * @return pe_status_t PE_SUCCESS on success, error code on parsing failure.
+ */
 static pe_status_t parseImportDirectory(const pe_analyzer *ctx, string_vector_t *imports)
 {
     if (ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].virtualAddress == 0 || ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].size == 0)
@@ -274,6 +340,15 @@ static pe_status_t parseImportDirectory(const pe_analyzer *ctx, string_vector_t 
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Parses the Export Directory Data Directory (IMAGE_DIRECTORY_ENTRY_EXPORT).
+ *
+ * Extracts exported functions, ordinals, exported API names, and handles detection of
+ * forwarded exports (symbols pointing to external DLL functions).
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ * @return pe_status_t PE_SUCCESS on successful export directory analysis.
+ */
 pe_status_t parseExportDirectory(const pe_analyzer *ctx)
 {
     const image_data_directory *dataDirectory = &ctx->optHeader64->dataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
@@ -375,6 +450,15 @@ pe_status_t parseExportDirectory(const pe_analyzer *ctx)
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Parses section headers, prints memory permissions, and checks for W^X violations.
+ *
+ * Iterates through the IMAGE_SECTION_HEADER array, decodes section flags (Execute, Read, Write),
+ * and flags W^X violations (sections marked as both Write and Execute).
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ * @return pe_status_t PE_SUCCESS on successful section header parsing.
+ */
 pe_status_t parseSectionHeaders(const pe_analyzer *ctx)
 {
     uint32_t offsetSectionTable = ctx->dosHeader->e_lfanew + sizeof(uint32_t) + sizeof(image_file_header) + ctx->fileHeader->sizeOfOptionalHeader;
@@ -425,6 +509,12 @@ pe_status_t parseSectionHeaders(const pe_analyzer *ctx)
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Initializes a dynamic string vector structure.
+ *
+ * @param itemsVector Pointer to the string_vector_t structure to initialize.
+ * @return pe_status_t PE_SUCCESS on valid initialization, PE_ERROR_NULL_POINTER if NULL.
+ */
 pe_status_t initItems(string_vector_t *itemsVector)
 {
     if (itemsVector == NULL)
@@ -438,6 +528,13 @@ pe_status_t initItems(string_vector_t *itemsVector)
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Appends a string item into the dynamic string vector with dynamic growth factor.
+ *
+ * @param itemsVector Pointer to the string vector.
+ * @param name Pointer to the string to store.
+ * @return pe_status_t PE_SUCCESS on success, PE_ERROR_OUT_OF_MEMORY on realloc failure.
+ */
 pe_status_t pushItem(string_vector_t *itemsVector, const char *name)
 {
     if (itemsVector == NULL || name == 0)
@@ -460,6 +557,11 @@ pe_status_t pushItem(string_vector_t *itemsVector, const char *name)
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Frees dynamically allocated memory in the string vector and resets state fields.
+ *
+ * @param itemsVector Pointer to the string vector to release.
+ */
 void freeItems(string_vector_t *itemsVector)
 {
     if (itemsVector == NULL)
@@ -471,6 +573,16 @@ void freeItems(string_vector_t *itemsVector)
     itemsVector->items = NULL;
 }
 
+/**
+ * @brief Matches imported API names against pre-defined heuristic threat rules.
+ *
+ * Evaluates import patterns (e.g., Process Injection, C2 networking, Keylogging)
+ * and flags potential threat categories when threshold criteria are satisfied.
+ *
+ * @param imports Vector containing all imported API names.
+ * @param rules Array of heuristic threat rules.
+ * @param ruleCount Number of rules in the array.
+ */
 void analyzeImportsHeuristics(const string_vector_t *imports, const heuristic_rule_t *rules, size_t ruleCount)
 {
     if (imports == NULL || rules == NULL || ruleCount == 0)
@@ -494,6 +606,12 @@ void analyzeImportsHeuristics(const string_vector_t *imports, const heuristic_ru
     }
 }
 
+/**
+ * @brief Translates threat type enum to human-readable string descriptions.
+ *
+ * @param type Category enum value.
+ * @return const char* String representation of the threat category.
+ */
 const char *threatTypeToString(pe_threat_type_t type)
 {
     switch (type)
@@ -511,6 +629,14 @@ const char *threatTypeToString(pe_threat_type_t type)
     }
 }
 
+/**
+ * @brief Inspects PE sections for structural anomalies, size mismatches, and high entropy.
+ *
+ * Flags W^X permission violations, VirtualSize vs RawSize allocation mismatches (packer indicators),
+ * and high Shannon entropy (H > 7.2) signaling encrypted/packed code or data payloads.
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ */
 void analyzeSectionAnomalies(const pe_analyzer *ctx)
 {
     if (!(ctx != NULL && ctx->fileHeader != NULL && ctx->sectionHeaders != NULL))
@@ -546,6 +672,16 @@ void analyzeSectionAnomalies(const pe_analyzer *ctx)
     }
 }
 
+/**
+ * @brief Calculates Shannon Entropy over a raw binary buffer.
+ *
+ * Computes entropy using H = -sum(P(i) * log2(P(i))) across byte value distribution [0..255].
+ * High entropy values (nearing 8.0) indicate compressed, packed, or encrypted data streams.
+ *
+ * @param data Pointer to the raw byte buffer.
+ * @param size Buffer size in bytes.
+ * @return double Calculated entropy score (0.0 to 8.0).
+ */
 double calculateEntropy(const uint8_t *data, size_t size)
 {
     double entropy = 0;
@@ -568,6 +704,17 @@ double calculateEntropy(const uint8_t *data, size_t size)
     return entropy;
 }
 
+/**
+ * @brief Evaluates binary hardening features from Optional Header DllCharacteristics bitmasks.
+ *
+ * Inspects security mitigations including ASLR (DYNAMIC_BASE), DEP/NX (NX_COMPAT),
+ * Control Flow Guard (GUARD_CF), SafeSEH (NO_SEH), and Terminal Server Awareness,
+ * updating the analysis report state accordingly.
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ * @param report Pointer to the destination report structure.
+ * @return pe_status_t PE_SUCCESS on successful mitigation decoding.
+ */
 pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx, pe_report_t *report)
 {
     if (ctx == NULL || ctx->optHeader64 == NULL)
@@ -627,6 +774,12 @@ pe_status_t analyzeSecurityMitigations(const pe_analyzer *ctx, pe_report_t *repo
     return PE_SUCCESS;
 }
 
+/**
+ * @brief Converts verdict enum value into static string description.
+ *
+ * @param r Verdict enum (CLEAN, SUSPICIOUS, MALICIOUS).
+ * @return const char* Human-readable verdict string.
+ */
 const char *verdictToStr(pe_verdict_type_t r)
 {
     if (r == CLEAN)
@@ -640,6 +793,18 @@ const char *verdictToStr(pe_verdict_type_t r)
     return "Malicious";
 }
 
+/**
+ * @brief Aggregates findings, computes cumulative risk scores, and generates terminal summary report.
+ *
+ * Applies threat weighting rules for missing mitigations (ASLR: +20, DEP/NX: +20, CFG: +5, SafeSEH: +5),
+ * maps cumulative score to verdict categories (0-40 Clean, 40-60 Suspicious, 60+ Malicious),
+ * and formats an executive security summary.
+ *
+ * @param ctx Pointer to the active PE analyzer context.
+ * @param report Pointer to the report structure.
+ * @param filepath Path string of the analyzed executable.
+ * @return pe_status_t PE_SUCCESS on successful report generation.
+ */
 pe_status_t generateReport(const pe_analyzer *ctx, pe_report_t *report, const char *filepath)
 {
     if (ctx == NULL || ctx->fileHeader == NULL || report == NULL)
@@ -690,7 +855,14 @@ pe_status_t generateReport(const pe_analyzer *ctx, pe_report_t *report, const ch
     return PE_SUCCESS;
 }
 
-// Cleans up allocated resources, unmaps memory, and closes file descriptors
+/**
+ * @brief Unmaps virtual memory regions and closes open file descriptors.
+ *
+ * Performs clean resource teardown to prevent dangling file descriptors, memory leaks,
+ * or invalid pointer accesses upon application shutdown or error exits.
+ *
+ * @param ctx Pointer to the PE analyzer context to clean up.
+ */
 void freeResources(pe_analyzer *ctx)
 {
     // Safety check to ensure the context is not null
